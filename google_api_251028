@@ -1,0 +1,603 @@
+/**
+ * 미국 수출 정보 자동화 시스템 (SerpAPI)
+ * 실제 구글 검색 데이터 기반 트렌드 분석
+ * 
+ * 사용 방법:
+ * 1. 새 구글 시트 생성
+ * 2. 이 코드를 Apps Script에 붙여넣기
+ * 3. 저장 후 시트로 돌아가기
+ * 4. 메뉴에서 순서대로 실행
+ */
+
+// ========================================
+// 전역 설정
+// ========================================
+
+function getConfig() {
+  const props = PropertiesService.getScriptProperties();
+  return {
+    serpApiKey: props.getProperty('SERP_API_KEY') || ''
+  };
+}
+
+// ========================================
+// 메뉴 생성
+// ========================================
+
+function onOpen() {
+  const ui = SpreadsheetApp.getUi();
+  ui.createMenu('🇺🇸 US Market Analysis')
+    .addItem('⚙️ Setup', 'setupSheets')
+    .addItem('🔑 API Key', 'showApiDialog')
+    .addSeparator()
+    .addItem('📊 Analyze Trends', 'analyzeTrends')
+    .addItem('🔍 Search Analysis', 'analyzeSearchResults')
+    .addItem('📰 News & Shopping', 'collectNewsAndShopping')
+    .addSeparator()
+    .addItem('✅ Test API', 'testConnection')
+    .addToUi();
+}
+
+// ========================================
+// 1. 초기 시트 설정
+// ========================================
+
+function setupSheets() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  
+  try {
+    // 기본 시트1 삭제
+    const sheet1 = ss.getSheetByName('시트1');
+    if (sheet1 && ss.getSheets().length > 1) {
+      ss.deleteSheet(sheet1);
+    }
+    
+    // Keywords 시트
+    let keywordsSheet = ss.getSheetByName('Keywords');
+    if (!keywordsSheet) {
+      keywordsSheet = ss.insertSheet('Keywords', 0);
+      keywordsSheet.getRange('A1:C1').setValues([['English Keyword', 'Category', 'Target Market']]);
+      keywordsSheet.getRange('A1:C1').setBackground('#4285f4').setFontColor('white').setFontWeight('bold');
+      
+      // K-beauty 수출용 샘플 키워드
+      const sampleKeywords = [
+        ['best retinol serum', 'Skincare', 'US anti-aging market'],
+        ['viral makeup products', 'Makeup', 'TikTok trends'],
+        ['clean beauty brands', 'Natural Beauty', 'Eco-conscious consumers'],
+        ['K-beauty for acne', 'K-beauty', 'Acne-prone skin'],
+        ['Korean sunscreen SPF', 'Sun Care', 'Daily protection'],
+        ['glass skin routine', 'Skincare Trend', 'K-beauty aesthetic'],
+        ['cushion foundation', 'Makeup', 'K-beauty innovation']
+      ];
+      keywordsSheet.getRange(2, 1, sampleKeywords.length, 3).setValues(sampleKeywords);
+      keywordsSheet.setColumnWidth(1, 220);
+      keywordsSheet.setColumnWidth(2, 150);
+      keywordsSheet.setColumnWidth(3, 200);
+    }
+    
+    // Trend Analysis 시트
+    let trendSheet = ss.getSheetByName('Trend Analysis');
+    if (!trendSheet) {
+      trendSheet = ss.insertSheet('Trend Analysis', 1);
+      trendSheet.getRange('A1:F1').setValues([
+        ['Keyword', 'Search Volume', 'Competition', 'Trend', 'Related Searches', 'Market Insight']
+      ]);
+      trendSheet.getRange('A1:F1').setBackground('#34a853').setFontColor('white').setFontWeight('bold');
+      trendSheet.setColumnWidth(1, 200);
+      trendSheet.setColumnWidth(2, 120);
+      trendSheet.setColumnWidth(3, 100);
+      trendSheet.setColumnWidth(4, 100);
+      trendSheet.setColumnWidth(5, 300);
+      trendSheet.setColumnWidth(6, 250);
+    }
+    
+    // Search Results 시트
+    let searchSheet = ss.getSheetByName('Search Results');
+    if (!searchSheet) {
+      searchSheet = ss.insertSheet('Search Results', 2);
+      searchSheet.getRange('A1:E1').setValues([
+        ['Keyword', 'Title', 'Link', 'Snippet', 'Position']
+      ]);
+      searchSheet.getRange('A1:E1').setBackground('#fbbc04').setFontColor('black').setFontWeight('bold');
+      searchSheet.setColumnWidth(1, 180);
+      searchSheet.setColumnWidth(2, 350);
+      searchSheet.setColumnWidth(3, 100);
+      searchSheet.setColumnWidth(4, 400);
+      searchSheet.setColumnWidth(5, 80);
+    }
+    
+    // Shopping & News 시트
+    let shoppingSheet = ss.getSheetByName('Shopping & News');
+    if (!shoppingSheet) {
+      shoppingSheet = ss.insertSheet('Shopping & News', 3);
+      shoppingSheet.getRange('A1:F1').setValues([
+        ['Type', 'Keyword', 'Title', 'Price/Source', 'Link', 'Rating/Date']
+      ]);
+      shoppingSheet.getRange('A1:F1').setBackground('#ea4335').setFontColor('white').setFontWeight('bold');
+      shoppingSheet.setColumnWidth(1, 100);
+      shoppingSheet.setColumnWidth(2, 180);
+      shoppingSheet.setColumnWidth(3, 350);
+      shoppingSheet.setColumnWidth(4, 120);
+      shoppingSheet.setColumnWidth(5, 100);
+      shoppingSheet.setColumnWidth(6, 150);
+    }
+    
+    // Update Log 시트
+    let logSheet = ss.getSheetByName('Update Log');
+    if (!logSheet) {
+      logSheet = ss.insertSheet('Update Log', 4);
+      logSheet.getRange('A1:C1').setValues([['Timestamp', 'Action', 'Results']]);
+      logSheet.getRange('A1:C1').setBackground('#9c27b0').setFontColor('white').setFontWeight('bold');
+      logSheet.setColumnWidth(1, 180);
+      logSheet.setColumnWidth(2, 150);
+      logSheet.setColumnWidth(3, 200);
+    }
+    
+    SpreadsheetApp.getUi().alert('✅ Setup Complete!\n\nNext steps:\n1. Click "API Key" to enter your SerpAPI key\n2. Click "Test API" to verify\n3. Click "Analyze Trends" to start');
+    
+  } catch (e) {
+    SpreadsheetApp.getUi().alert('❌ Error:\n' + e.toString());
+    Logger.log('Setup error: ' + e);
+  }
+}
+
+// ========================================
+// 2. API 키 입력
+// ========================================
+
+function showApiDialog() {
+  const html = HtmlService.createHtmlOutput(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <base target="_top">
+      <style>
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+          padding: 20px;
+          line-height: 1.6;
+        }
+        h2 { color: #4285f4; margin-bottom: 10px; }
+        .info-box {
+          background: #e8f0fe;
+          padding: 15px;
+          border-radius: 5px;
+          margin-bottom: 20px;
+          font-size: 14px;
+        }
+        .form-group { margin-bottom: 15px; }
+        label {
+          display: block;
+          margin-bottom: 5px;
+          font-weight: bold;
+          color: #333;
+        }
+        input {
+          width: 100%;
+          padding: 10px;
+          border: 1px solid #ddd;
+          border-radius: 4px;
+          box-sizing: border-box;
+          font-size: 14px;
+        }
+        .help-text {
+          font-size: 12px;
+          color: #666;
+          margin-top: 5px;
+        }
+        button {
+          background: #4285f4;
+          color: white;
+          padding: 12px 24px;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 14px;
+          font-weight: bold;
+          width: 100%;
+        }
+        button:hover { background: #357ae8; }
+        a { color: #1a73e8; }
+      </style>
+    </head>
+    <body>
+      <h2>🔑 SerpAPI Key Setup</h2>
+      
+      <div class="info-box">
+        <strong>📌 Already have SerpAPI key?</strong><br>
+        Just paste it below!<br><br>
+        <strong>Need a key?</strong><br>
+        Visit <a href="https://serpapi.com/users/sign_up" target="_blank">SerpAPI.com</a> (100 searches/month free)
+      </div>
+      
+      <div class="form-group">
+        <label>SerpAPI Key</label>
+        <input type="text" id="serpApiKey" placeholder="e.g., 1234567890abcdef...">
+        <div class="help-text">Find it at serpapi.com/manage-api-key</div>
+      </div>
+      
+      <button onclick="saveKey()">💾 Save</button>
+      
+      <script>
+        function saveKey() {
+          const key = document.getElementById('serpApiKey').value.trim();
+          
+          if (!key) {
+            alert('Please enter your SerpAPI key!');
+            return;
+          }
+          
+          google.script.run
+            .withSuccessHandler(function() {
+              alert('✅ API key saved!\\n\\nNow click "Test API" to verify.');
+              google.script.host.close();
+            })
+            .withFailureHandler(function(error) {
+              alert('❌ Save failed:\\n' + error);
+            })
+            .saveApiKey({ serpApiKey: key });
+        }
+      </script>
+    </body>
+    </html>
+  `).setWidth(450).setHeight(400);
+  
+  SpreadsheetApp.getUi().showModalDialog(html, 'SerpAPI Setup');
+}
+
+function saveApiKey(keys) {
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty('SERP_API_KEY', keys.serpApiKey);
+  return true;
+}
+
+// ========================================
+// 3. 연결 테스트
+// ========================================
+
+function testConnection() {
+  const config = getConfig();
+  
+  if (!config.serpApiKey) {
+    SpreadsheetApp.getUi().alert('❌ No API key found.\n\nPlease click "API Key" first.');
+    return;
+  }
+  
+  try {
+    const url = `https://serpapi.com/search.json?q=test&api_key=${config.serpApiKey}&num=1`;
+    
+    const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+    const code = response.getResponseCode();
+    
+    if (code === 200) {
+      const data = JSON.parse(response.getContentText());
+      if (data.search_metadata) {
+        SpreadsheetApp.getUi().alert('✅ Connection Successful!\n\nSerpAPI is working correctly.\nYou can now use all features.');
+      } else {
+        SpreadsheetApp.getUi().alert('⚠️ Unexpected Response\n\nAPI connected but data format is unusual.\nTry running "Analyze Trends".');
+      }
+    } else if (code === 401) {
+      SpreadsheetApp.getUi().alert('❌ Authentication Failed (401)\n\nYour API key is invalid.\nPlease check and re-enter it.');
+    } else {
+      SpreadsheetApp.getUi().alert('⚠️ Error\n\nResponse code: ' + code + '\n\nPlease try again later.');
+    }
+    
+  } catch (e) {
+    SpreadsheetApp.getUi().alert('❌ Connection Error:\n\n' + e.toString());
+    Logger.log('Test error: ' + e);
+  }
+}
+
+// ========================================
+// 4. 트렌드 분석 (핵심 기능)
+// ========================================
+
+function analyzeTrends() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const keywordsSheet = ss.getSheetByName('Keywords');
+  const trendSheet = ss.getSheetByName('Trend Analysis');
+  
+  if (!keywordsSheet || !trendSheet) {
+    SpreadsheetApp.getUi().alert('❌ Sheets not found.\n\nPlease run "Setup" first.');
+    return;
+  }
+  
+  const config = getConfig();
+  if (!config.serpApiKey) {
+    SpreadsheetApp.getUi().alert('❌ No API key.\n\nPlease click "API Key" first.');
+    return;
+  }
+  
+  // 키워드 가져오기
+  const keywords = keywordsSheet.getRange('A2:A').getValues()
+    .flat()
+    .filter(function(v) { return v !== ''; });
+  
+  if (keywords.length === 0) {
+    SpreadsheetApp.getUi().alert('❌ No keywords found.\n\nPlease add keywords in the "Keywords" sheet.');
+    return;
+  }
+  
+  // 기존 데이터 지우기
+  const lastRow = trendSheet.getLastRow();
+  if (lastRow > 1) {
+    trendSheet.deleteRows(2, lastRow - 1);
+  }
+  
+  let successCount = 0;
+  
+  for (let i = 0; i < keywords.length; i++) {
+    const keyword = keywords[i];
+    
+    try {
+      const encodedKeyword = encodeURIComponent(keyword);
+      const url = `https://serpapi.com/search.json?q=${encodedKeyword}&api_key=${config.serpApiKey}&gl=us&hl=en`;
+      
+      const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+      
+      if (response.getResponseCode() !== 200) {
+        Logger.log('Error for ' + keyword + ': ' + response.getResponseCode());
+        continue;
+      }
+      
+      const data = JSON.parse(response.getContentText());
+      
+      // 검색 결과 수 (대략적 인기도)
+      const searchInfo = data.search_information || {};
+      const totalResults = searchInfo.total_results || 0;
+      
+      // 관련 검색어
+      const relatedSearches = data.related_searches || [];
+      const relatedTerms = relatedSearches
+        .slice(0, 5)
+        .map(function(item) { return item.query || ''; })
+        .filter(function(q) { return q !== ''; })
+        .join(', ') || 'None';
+      
+      // 트렌드 판단
+      let trend = '📊 Moderate';
+      let competition = 'Medium';
+      let insight = '';
+      
+      if (totalResults > 100000000) {
+        trend = '🔥 Very High';
+        competition = 'High';
+        insight = 'Highly competitive but large market';
+      } else if (totalResults > 10000000) {
+        trend = '📈 High';
+        competition = 'Medium-High';
+        insight = 'Good opportunity with moderate competition';
+      } else if (totalResults > 1000000) {
+        trend = '📊 Moderate';
+        competition = 'Medium';
+        insight = 'Niche market with potential';
+      } else {
+        trend = '📉 Low';
+        competition = 'Low';
+        insight = 'Small market or new trend';
+      }
+      
+      trendSheet.appendRow([
+        keyword,
+        totalResults.toLocaleString(),
+        competition,
+        trend,
+        relatedTerms,
+        insight
+      ]);
+      
+      successCount++;
+      
+      // API 제한 준수
+      Utilities.sleep(1000);
+      
+    } catch (e) {
+      Logger.log('Error analyzing ' + keyword + ': ' + e);
+    }
+  }
+  
+  trendSheet.autoResizeColumns(1, 6);
+  
+  // 로그 기록
+  recordLog('Trend Analysis', successCount + ' keywords analyzed');
+  
+  SpreadsheetApp.getUi().alert('✅ Trend Analysis Complete!\n\nAnalyzed: ' + successCount + ' keywords\nCheck "Trend Analysis" sheet');
+}
+
+// ========================================
+// 5. 검색 결과 분석
+// ========================================
+
+function analyzeSearchResults() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const keywordsSheet = ss.getSheetByName('Keywords');
+  const searchSheet = ss.getSheetByName('Search Results');
+  
+  if (!keywordsSheet || !searchSheet) {
+    SpreadsheetApp.getUi().alert('❌ Sheets not found.\n\nPlease run "Setup" first.');
+    return;
+  }
+  
+  const config = getConfig();
+  if (!config.serpApiKey) {
+    SpreadsheetApp.getUi().alert('❌ No API key.\n\nPlease click "API Key" first.');
+    return;
+  }
+  
+  const keywords = keywordsSheet.getRange('A2:A').getValues()
+    .flat()
+    .filter(function(v) { return v !== ''; });
+  
+  if (keywords.length === 0) {
+    SpreadsheetApp.getUi().alert('❌ No keywords.\n\nAdd keywords in "Keywords" sheet.');
+    return;
+  }
+  
+  // 기존 데이터 지우기
+  const lastRow = searchSheet.getLastRow();
+  if (lastRow > 1) {
+    searchSheet.deleteRows(2, lastRow - 1);
+  }
+  
+  let totalResults = 0;
+  
+  for (let i = 0; i < keywords.length; i++) {
+    const keyword = keywords[i];
+    
+    try {
+      const encodedKeyword = encodeURIComponent(keyword);
+      const url = `https://serpapi.com/search.json?q=${encodedKeyword}&api_key=${config.serpApiKey}&gl=us&hl=en&num=5`;
+      
+      const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+      
+      if (response.getResponseCode() !== 200) {
+        Logger.log('Error for ' + keyword);
+        continue;
+      }
+      
+      const data = JSON.parse(response.getContentText());
+      const organicResults = data.organic_results || [];
+      
+      organicResults.slice(0, 5).forEach(function(result, index) {
+        searchSheet.appendRow([
+          keyword,
+          result.title || '',
+          result.link || '',
+          result.snippet || '',
+          index + 1
+        ]);
+        totalResults++;
+      });
+      
+      Utilities.sleep(1000);
+      
+    } catch (e) {
+      Logger.log('Error: ' + e);
+    }
+  }
+  
+  searchSheet.autoResizeColumns(1, 5);
+  
+  // 링크 색상
+  if (totalResults > 0) {
+    const linkRange = searchSheet.getRange(2, 3, totalResults, 1);
+    linkRange.setFontColor('#1155cc');
+  }
+  
+  recordLog('Search Analysis', totalResults + ' results collected');
+  
+  SpreadsheetApp.getUi().alert('✅ Search Analysis Complete!\n\nCollected: ' + totalResults + ' search results\nCheck "Search Results" sheet');
+}
+
+// ========================================
+// 6. 뉴스 & 쇼핑 데이터
+// ========================================
+
+function collectNewsAndShopping() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const keywordsSheet = ss.getSheetByName('Keywords');
+  const shoppingSheet = ss.getSheetByName('Shopping & News');
+  
+  if (!keywordsSheet || !shoppingSheet) {
+    SpreadsheetApp.getUi().alert('❌ Sheets not found.\n\nPlease run "Setup" first.');
+    return;
+  }
+  
+  const config = getConfig();
+  if (!config.serpApiKey) {
+    SpreadsheetApp.getUi().alert('❌ No API key.\n\nPlease click "API Key" first.');
+    return;
+  }
+  
+  const keywords = keywordsSheet.getRange('A2:A3').getValues()
+    .flat()
+    .filter(function(v) { return v !== ''; });
+  
+  if (keywords.length === 0) {
+    SpreadsheetApp.getUi().alert('❌ No keywords.\n\nAdd keywords in "Keywords" sheet.');
+    return;
+  }
+  
+  // 기존 데이터 지우기
+  const lastRow = shoppingSheet.getLastRow();
+  if (lastRow > 1) {
+    shoppingSheet.deleteRows(2, lastRow - 1);
+  }
+  
+  let totalItems = 0;
+  
+  for (let i = 0; i < Math.min(keywords.length, 2); i++) {
+    const keyword = keywords[i];
+    
+    try {
+      // Shopping 검색
+      const encodedKeyword = encodeURIComponent(keyword);
+      const url = `https://serpapi.com/search.json?q=${encodedKeyword}&api_key=${config.serpApiKey}&tbm=shop&gl=us&hl=en`;
+      
+      const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+      
+      if (response.getResponseCode() === 200) {
+        const data = JSON.parse(response.getContentText());
+        const shoppingResults = data.shopping_results || [];
+        
+        shoppingResults.slice(0, 3).forEach(function(item) {
+          const rating = item.rating ? item.rating + ' ⭐' : 'No rating';
+          const price = item.price || 'N/A';
+          const link = item.link || item.product_link || '';
+          
+          shoppingSheet.appendRow([
+            '🛍️ Shopping',
+            keyword,
+            item.title || '',
+            price,
+            link,
+            rating
+          ]);
+          totalItems++;
+        });
+      }
+      
+      Utilities.sleep(1500);
+      
+    } catch (e) {
+      Logger.log('Error: ' + e);
+    }
+  }
+  
+  shoppingSheet.autoResizeColumns(1, 6);
+  
+  // 링크 컬럼 파란색 & 클릭 가능하게
+  if (totalItems > 0) {
+    const linkRange = shoppingSheet.getRange(2, 5, totalItems, 1);
+    linkRange.setFontColor('#1155cc');
+    
+    // 실제 하이퍼링크로 만들기
+    const linkValues = linkRange.getValues();
+    linkValues.forEach(function(row, index) {
+      const link = row[0];
+      if (link && link.startsWith('http')) {
+        const cell = shoppingSheet.getRange(index + 2, 5);
+        cell.setFormula('=HYPERLINK("' + link + '", "🔗 View")');
+      }
+    });
+  }
+  
+  recordLog('News & Shopping', totalItems + ' items collected');
+  
+  SpreadsheetApp.getUi().alert('✅ Collection Complete!\n\nCollected: ' + totalItems + ' items\nCheck "Shopping & News" sheet\n\nNote: Limited to 2 keywords to save API quota');
+}
+
+// ========================================
+// 7. 로그 기록
+// ========================================
+
+function recordLog(action, result) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const logSheet = ss.getSheetByName('Update Log');
+  
+  if (logSheet) {
+    const now = new Date();
+    const timestamp = Utilities.formatDate(now, 'America/New_York', 'yyyy-MM-dd HH:mm:ss');
+    logSheet.appendRow([timestamp, action, result]);
+  }
+}
