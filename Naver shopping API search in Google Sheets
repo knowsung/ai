@@ -117,6 +117,12 @@ function searchNaverShopping(keyword) {
   var clientId = scriptProperties.getProperty('CLIENT_ID');
   var clientSecret = scriptProperties.getProperty('CLIENT_SECRET');
   
+  // 인증 정보 확인
+  if (!clientId || !clientSecret) {
+    SpreadsheetApp.getUi().alert('API 인증 정보가 없습니다. API 인증 설정을 먼저 완료해주세요.');
+    return;
+  }
+  
   var url = 'https://openapi.naver.com/v1/search/shop.json?query=' + encodeURIComponent(keyword) + '&display=100&sort=sim';
   
   var options = {
@@ -124,12 +130,27 @@ function searchNaverShopping(keyword) {
     'headers': {
       'X-Naver-Client-Id': clientId,
       'X-Naver-Client-Secret': clientSecret
-    }
+    },
+    'muteHttpExceptions': true
   };
   
   try {
     var response = UrlFetchApp.fetch(url, options);
+    var responseCode = response.getResponseCode();
     var result = JSON.parse(response.getContentText());
+    
+    // 오류 처리
+    if (responseCode !== 200) {
+      var errorMsg = '오류 코드: ' + responseCode + '\n';
+      errorMsg += '오류 메시지: ' + (result.errorMessage || result.message || '알 수 없는 오류') + '\n\n';
+      errorMsg += '확인사항:\n';
+      errorMsg += '1. 네이버 개발자 센터에서 "쇼핑" API가 활성화되어 있는지 확인\n';
+      errorMsg += '2. Client ID와 Secret이 정확한지 확인\n';
+      errorMsg += '3. API 사용량 제한을 초과하지 않았는지 확인';
+      
+      SpreadsheetApp.getUi().alert(errorMsg);
+      return;
+    }
     
     if (result.items && result.items.length > 0) {
       displayResults(result.items);
@@ -137,7 +158,7 @@ function searchNaverShopping(keyword) {
       SpreadsheetApp.getUi().alert('검색 결과가 없습니다.');
     }
   } catch (e) {
-    SpreadsheetApp.getUi().alert('API 호출 오류: ' + e.message);
+    SpreadsheetApp.getUi().alert('API 호출 오류: ' + e.message + '\n\nClient ID: ' + clientId.substring(0, 5) + '...\n(앞 5자리만 표시)');
   }
 }
 
