@@ -1,0 +1,216 @@
+// 메뉴 생성
+function onOpen() {
+  var ui = SpreadsheetApp.getUi();
+  ui.createMenu('네이버 쇼핑')
+    .addItem('API 인증 설정', 'showApiDialog')
+    .addItem('상품 검색', 'showSearchDialog')
+    .addToUi();
+}
+
+// API 인증 정보 입력 다이얼로그
+function showApiDialog() {
+  var html = HtmlService.createHtmlOutput(`
+    <style>
+      body { font-family: Arial; padding: 20px; }
+      input { width: 100%; padding: 8px; margin: 5px 0 15px 0; box-sizing: border-box; }
+      button { background-color: #4285f4; color: white; padding: 10px 20px; border: none; cursor: pointer; width: 100%; }
+      button:hover { background-color: #357ae8; }
+      label { font-weight: bold; }
+    </style>
+    <div>
+      <label>Client ID:</label>
+      <input type="text" id="clientId" placeholder="네이버 API Client ID 입력">
+      
+      <label>Client Secret:</label>
+      <input type="text" id="clientSecret" placeholder="네이버 API Client Secret 입력">
+      
+      <button onclick="saveCredentials()">저장</button>
+    </div>
+    
+    <script>
+      function saveCredentials() {
+        var clientId = document.getElementById('clientId').value;
+        var clientSecret = document.getElementById('clientSecret').value;
+        
+        if (!clientId || !clientSecret) {
+          alert('모든 항목을 입력해주세요.');
+          return;
+        }
+        
+        google.script.run
+          .withSuccessHandler(function() {
+            alert('API 인증 정보가 저장되었습니다.');
+            google.script.host.close();
+          })
+          .saveApiCredentials(clientId, clientSecret);
+      }
+    </script>
+  `)
+  .setWidth(400)
+  .setHeight(250);
+  
+  SpreadsheetApp.getUi().showModalDialog(html, 'API 인증 설정');
+}
+
+// API 인증 정보 저장
+function saveApiCredentials(clientId, clientSecret) {
+  var scriptProperties = PropertiesService.getScriptProperties();
+  scriptProperties.setProperty('CLIENT_ID', clientId);
+  scriptProperties.setProperty('CLIENT_SECRET', clientSecret);
+}
+
+// 상품 검색 다이얼로그
+function showSearchDialog() {
+  var scriptProperties = PropertiesService.getScriptProperties();
+  var clientId = scriptProperties.getProperty('CLIENT_ID');
+  var clientSecret = scriptProperties.getProperty('CLIENT_SECRET');
+  
+  if (!clientId || !clientSecret) {
+    SpreadsheetApp.getUi().alert('먼저 API 인증 설정을 완료해주세요.');
+    return;
+  }
+  
+  var html = HtmlService.createHtmlOutput(`
+    <style>
+      body { font-family: Arial; padding: 20px; }
+      input { width: 100%; padding: 10px; margin: 10px 0; box-sizing: border-box; font-size: 14px; }
+      button { background-color: #4285f4; color: white; padding: 12px 20px; border: none; cursor: pointer; width: 100%; font-size: 14px; }
+      button:hover { background-color: #357ae8; }
+      label { font-weight: bold; font-size: 14px; }
+    </style>
+    <div>
+      <label>검색 키워드:</label>
+      <input type="text" id="keyword" placeholder="검색할 상품명을 입력하세요" onkeypress="if(event.keyCode==13) searchProducts()">
+      <button onclick="searchProducts()">검색</button>
+    </div>
+    
+    <script>
+      function searchProducts() {
+        var keyword = document.getElementById('keyword').value;
+        
+        if (!keyword) {
+          alert('검색 키워드를 입력해주세요.');
+          return;
+        }
+        
+        google.script.run
+          .withSuccessHandler(function() {
+            alert('검색이 완료되었습니다.');
+            google.script.host.close();
+          })
+          .withFailureHandler(function(error) {
+            alert('검색 중 오류가 발생했습니다: ' + error);
+          })
+          .searchNaverShopping(keyword);
+      }
+    </script>
+  `)
+  .setWidth(400)
+  .setHeight(200);
+  
+  SpreadsheetApp.getUi().showModalDialog(html, '상품 검색');
+}
+
+// 네이버 쇼핑 API 호출
+function searchNaverShopping(keyword) {
+  var scriptProperties = PropertiesService.getScriptProperties();
+  var clientId = scriptProperties.getProperty('CLIENT_ID');
+  var clientSecret = scriptProperties.getProperty('CLIENT_SECRET');
+  
+  var url = 'https://openapi.naver.com/v1/search/shop.json?query=' + encodeURIComponent(keyword) + '&display=100&sort=sim';
+  
+  var options = {
+    'method': 'get',
+    'headers': {
+      'X-Naver-Client-Id': clientId,
+      'X-Naver-Client-Secret': clientSecret
+    }
+  };
+  
+  try {
+    var response = UrlFetchApp.fetch(url, options);
+    var result = JSON.parse(response.getContentText());
+    
+    if (result.items && result.items.length > 0) {
+      displayResults(result.items);
+    } else {
+      SpreadsheetApp.getUi().alert('검색 결과가 없습니다.');
+    }
+  } catch (e) {
+    SpreadsheetApp.getUi().alert('API 호출 오류: ' + e.message);
+  }
+}
+
+// 결과를 시트에 표시
+function displayResults(items) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  sheet.clear();
+  
+  // 헤더 설정
+  var headers = ['번호', '상품명', '이미지', '링크', '최저가', '쇼핑몰', '제조사', '브랜드', '카테고리1', '카테고리2', '카테고리3', '카테고리4', '상품ID', '상품타입'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  
+  // 헤더 서식
+  var headerRange = sheet.getRange(1, 1, 1, headers.length);
+  headerRange.setBackground('#1a73e8')
+             .setFontColor('#ffffff')
+             .setFontWeight('bold')
+             .setHorizontalAlignment('center')
+             .setVerticalAlignment('middle');
+  
+  // 데이터 입력
+  var data = [];
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i];
+    var categories = (item.category1 + '>' + item.category2 + '>' + item.category3 + '>' + item.category4).split('>');
+    
+    data.push([
+      i + 1,
+      item.title.replace(/<[^>]*>/g, ''), // HTML 태그 제거
+      '=IMAGE("' + item.image + '")',
+      item.link,
+      item.lprice,
+      item.mallName,
+      item.maker,
+      item.brand,
+      categories[0] || '',
+      categories[1] || '',
+      categories[2] || '',
+      categories[3] || '',
+      item.productId,
+      item.productType
+    ]);
+  }
+  
+  // 데이터 범위에 값 입력
+  var dataRange = sheet.getRange(2, 1, data.length, headers.length);
+  dataRange.setValues(data);
+  
+  // 모든 셀 서식 설정
+  var allRange = sheet.getRange(1, 1, data.length + 1, headers.length);
+  allRange.setHorizontalAlignment('center')
+          .setVerticalAlignment('middle');
+  
+  // 행 높이 설정
+  for (var i = 2; i <= data.length + 1; i++) {
+    sheet.setRowHeight(i, 150);
+  }
+  
+  // 이미지 열(C열) 너비 고정
+  sheet.setColumnWidth(3, 150);
+  
+  // 나머지 열은 데이터에 맞게 자동 조정
+  for (var i = 1; i <= headers.length; i++) {
+    if (i !== 3) { // 이미지 열 제외
+      sheet.autoResizeColumn(i);
+    }
+  }
+  
+  // 링크 열(D열)에 하이퍼링크 설정
+  for (var i = 0; i < data.length; i++) {
+    var linkCell = sheet.getRange(i + 2, 4);
+    var linkUrl = data[i][3];
+    linkCell.setFormula('=HYPERLINK("' + linkUrl + '", "상품보기")');
+    linkCell.setFontColor('#1155cc').setFontLine('underline');
+  }
+}
