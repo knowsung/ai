@@ -1,237 +1,253 @@
-// 메뉴 생성
+/**
+ * 구글 시트에서 네이버 데이터랩 쇼핑 인사이트 API를 활용해
+ * 키워드별 검색 트렌드를 조회하는 앱스 스크립트입니다.
+ */
+
+// 사용자 지정 메뉴 생성
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
-  ui.createMenu('네이버 쇼핑')
-    .addItem('API 인증 설정', 'showApiDialog')
-    .addItem('상품 검색', 'showSearchDialog')
+  ui.createMenu('네이버 데이터랩')
+    .addItem('API 설정', 'showApiDialog')
     .addToUi();
+
+  // 이미 인증 정보가 있다면 키워드 입력 시트를 보장합니다.
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty('CLIENT_ID') && props.getProperty('CLIENT_SECRET')) {
+    ensureKeywordInputSheet();
+  }
 }
 
-// API 인증 정보 입력 다이얼로그
+// API 설정을 위한 HTML 다이얼로그 표시
 function showApiDialog() {
-  var html = HtmlService.createHtmlOutput(`
-    <style>
-      body { font-family: Arial; padding: 20px; }
-      input { width: 100%; padding: 8px; margin: 5px 0 15px 0; box-sizing: border-box; }
-      button { background-color: #4285f4; color: white; padding: 10px 20px; border: none; cursor: pointer; width: 100%; }
-      button:hover { background-color: #357ae8; }
-      label { font-weight: bold; }
-    </style>
-    <div>
-      <label>Client ID:</label>
-      <input type="text" id="clientId" placeholder="네이버 API Client ID 입력">
-      
-      <label>Client Secret:</label>
-      <input type="text" id="clientSecret" placeholder="네이버 API Client Secret 입력">
-      
-      <button onclick="saveCredentials()">저장</button>
-    </div>
-    
-    <script>
-      function saveCredentials() {
-        var clientId = document.getElementById('clientId').value;
-        var clientSecret = document.getElementById('clientSecret').value;
-        
-        if (!clientId || !clientSecret) {
-          alert('모든 항목을 입력해주세요.');
-          return;
-        }
-        
-        google.script.run
-          .withSuccessHandler(function() {
-            alert('API 인증 정보가 저장되었습니다.');
-            google.script.host.close();
-          })
-          .saveApiCredentials(clientId, clientSecret);
-      }
-    </script>
-  `)
-  .setWidth(400)
-  .setHeight(250);
-  
-  SpreadsheetApp.getUi().showModalDialog(html, 'API 인증 설정');
+  var html = HtmlService.createHtmlOutput(
+    '<style>' +
+      'body { font-family: "Noto Sans KR", Arial, sans-serif; padding: 20px; }' +
+      'label { display: block; margin-bottom: 6px; font-weight: 600; }' +
+      'input { width: 100%; padding: 10px; margin-bottom: 16px; box-sizing: border-box; }' +
+      'button { background-color: #03c75a; color: #fff; border: none; padding: 10px 16px; cursor: pointer; width: 100%; font-size: 14px; }' +
+      'button:hover { background-color: #02b352; }' +
+      '.desc { font-size: 12px; color: #555; margin-bottom: 18px; line-height: 1.5; }' +
+    '</style>' +
+    '<div>' +
+      '<h2 style="margin-top:0">네이버 데이터랩 API 설정</h2>' +
+      '<p class="desc">네이버 개발자 센터에서 발급받은 Client ID와 Client Secret을 입력하세요.\n' +
+      '저장 후 시트1에 키워드를 입력할 수 있는 영역이 생성됩니다.</p>' +
+      '<label>Client ID</label>' +
+      '<input type="text" id="clientId" placeholder="예) abcdef123456" />' +
+      '<label>Client Secret</label>' +
+      '<input type="text" id="clientSecret" placeholder="예) 7890ghijkl" />' +
+      '<button onclick="save()">저장</button>' +
+    '</div>' +
+    '<script>' +
+      'function save() {' +
+        'var id = document.getElementById("clientId").value.trim();' +
+        'var secret = document.getElementById("clientSecret").value.trim();' +
+        'if (!id || !secret) {' +
+          'alert("Client ID와 Client Secret을 모두 입력해주세요.");' +
+          'return;' +
+        '}' +
+        'google.script.run.withSuccessHandler(function(message) {' +
+          'alert(message);' +
+          'google.script.host.close();' +
+        '}).withFailureHandler(function(err) {' +
+          'alert("저장 중 오류가 발생했습니다: " + err.message);' +
+        '}).saveApiCredentials(id, secret);' +
+      '}' +
+    '</script>'
+  )
+    .setWidth(420)
+    .setHeight(360);
+
+  SpreadsheetApp.getUi().showModalDialog(html, '네이버 데이터랩 API 설정');
 }
 
 // API 인증 정보 저장
 function saveApiCredentials(clientId, clientSecret) {
-  var scriptProperties = PropertiesService.getScriptProperties();
-  scriptProperties.setProperty('CLIENT_ID', clientId);
-  scriptProperties.setProperty('CLIENT_SECRET', clientSecret);
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty('CLIENT_ID', clientId);
+  props.setProperty('CLIENT_SECRET', clientSecret);
+
+  ensureKeywordInputSheet();
+  return 'API 인증 정보가 저장되었습니다. 시트1에서 키워드를 입력해보세요!';
 }
 
-// 상품 검색 다이얼로그
-function showSearchDialog() {
-  var scriptProperties = PropertiesService.getScriptProperties();
-  var clientId = scriptProperties.getProperty('CLIENT_ID');
-  var clientSecret = scriptProperties.getProperty('CLIENT_SECRET');
-  
-  if (!clientId || !clientSecret) {
-    SpreadsheetApp.getUi().alert('먼저 API 인증 설정을 완료해주세요.');
-    return;
+// 시트1에 키워드 입력 영역 생성
+function ensureKeywordInputSheet() {
+  var ss = SpreadsheetApp.getActive();
+  var sheet = ss.getSheetByName('시트1');
+  if (!sheet) {
+    sheet = ss.getSheets()[0];
+    sheet.setName('시트1');
   }
-  
-  var html = HtmlService.createHtmlOutput(`
-    <style>
-      body { font-family: Arial; padding: 20px; }
-      input { width: 100%; padding: 10px; margin: 10px 0; box-sizing: border-box; font-size: 14px; }
-      button { background-color: #4285f4; color: white; padding: 12px 20px; border: none; cursor: pointer; width: 100%; font-size: 14px; }
-      button:hover { background-color: #357ae8; }
-      label { font-weight: bold; font-size: 14px; }
-    </style>
-    <div>
-      <label>검색 키워드:</label>
-      <input type="text" id="keyword" placeholder="검색할 상품명을 입력하세요" onkeypress="if(event.keyCode==13) searchProducts()">
-      <button onclick="searchProducts()">검색</button>
-    </div>
-    
-    <script>
-      function searchProducts() {
-        var keyword = document.getElementById('keyword').value;
-        
-        if (!keyword) {
-          alert('검색 키워드를 입력해주세요.');
-          return;
-        }
-        
-        google.script.run
-          .withSuccessHandler(function() {
-            alert('검색이 완료되었습니다.');
-            google.script.host.close();
-          })
-          .withFailureHandler(function(error) {
-            alert('검색 중 오류가 발생했습니다: ' + error);
-          })
-          .searchNaverShopping(keyword);
-      }
-    </script>
-  `)
-  .setWidth(400)
-  .setHeight(200);
-  
-  SpreadsheetApp.getUi().showModalDialog(html, '상품 검색');
+
+  sheet.clear();
+  sheet.getRange('A1').setValue('네이버 쇼핑 검색 트렌드 키워드 입력')
+    .setFontWeight('bold')
+    .setFontSize(14);
+
+  sheet.getRange('A3').setValue('키워드');
+  sheet.getRange('B3').setValue('');
+  sheet.getRange('B3').setNote('검색할 키워드를 입력하면 "검색 트렌드" 시트가 자동으로 생성됩니다.');
+
+  sheet.getRange('A1:B3').setHorizontalAlignment('left');
+  sheet.getRange('A3:B3').setFontWeight('bold');
+  sheet.setColumnWidths(1, 2, 200);
+  sheet.setRowHeights(1, 3, 30);
 }
 
-// 네이버 쇼핑 API 호출
-function searchNaverShopping(keyword) {
-  var scriptProperties = PropertiesService.getScriptProperties();
-  var clientId = scriptProperties.getProperty('CLIENT_ID');
-  var clientSecret = scriptProperties.getProperty('CLIENT_SECRET');
-  
-  // 인증 정보 확인
-  if (!clientId || !clientSecret) {
-    SpreadsheetApp.getUi().alert('API 인증 정보가 없습니다. API 인증 설정을 먼저 완료해주세요.');
+// 키워드 입력시 자동으로 검색 트렌드 시트를 생성
+function onEdit(e) {
+  if (!e || !e.range) {
     return;
   }
-  
-  var url = 'https://openapi.naver.com/v1/search/shop.json?query=' + encodeURIComponent(keyword) + '&display=100&sort=sim';
-  
-  var options = {
-    'method': 'get',
-    'headers': {
-      'X-Naver-Client-Id': clientId,
-      'X-Naver-Client-Secret': clientSecret
-    },
-    'muteHttpExceptions': true
-  };
-  
-  try {
-    var response = UrlFetchApp.fetch(url, options);
-    var responseCode = response.getResponseCode();
-    var result = JSON.parse(response.getContentText());
-    
-    // 오류 처리
-    if (responseCode !== 200) {
-      var errorMsg = '오류 코드: ' + responseCode + '\n';
-      errorMsg += '오류 메시지: ' + (result.errorMessage || result.message || '알 수 없는 오류') + '\n\n';
-      errorMsg += '확인사항:\n';
-      errorMsg += '1. 네이버 개발자 센터에서 "쇼핑" API가 활성화되어 있는지 확인\n';
-      errorMsg += '2. Client ID와 Secret이 정확한지 확인\n';
-      errorMsg += '3. API 사용량 제한을 초과하지 않았는지 확인';
-      
-      SpreadsheetApp.getUi().alert(errorMsg);
+
+  var range = e.range;
+  var sheet = range.getSheet();
+
+  if (sheet.getName() === '시트1' && range.getA1Notation() === 'B3') {
+    var keyword = (range.getValue() || '').toString().trim();
+    if (!keyword) {
       return;
     }
-    
-    if (result.items && result.items.length > 0) {
-      displayResults(result.items);
-    } else {
-      SpreadsheetApp.getUi().alert('검색 결과가 없습니다.');
+
+    try {
+      buildTrendSheet(keyword);
+    } catch (error) {
+      SpreadsheetApp.getUi().alert('검색 트렌드를 생성하지 못했습니다.\n' + error.message);
     }
-  } catch (e) {
-    SpreadsheetApp.getUi().alert('API 호출 오류: ' + e.message + '\n\nClient ID: ' + clientId.substring(0, 5) + '...\n(앞 5자리만 표시)');
   }
 }
 
-// 결과를 시트에 표시
-function displayResults(items) {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-  sheet.clear();
-  
-  // 헤더 설정
-  var headers = ['번호', '상품명', '이미지', '링크', '최저가', '쇼핑몰', '제조사', '브랜드', '카테고리1', '카테고리2', '카테고리3', '카테고리4', '상품ID', '상품타입'];
-  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-  
-  // 헤더 서식
-  var headerRange = sheet.getRange(1, 1, 1, headers.length);
-  headerRange.setBackground('#1a73e8')
-             .setFontColor('#ffffff')
-             .setFontWeight('bold')
-             .setHorizontalAlignment('center')
-             .setVerticalAlignment('middle');
-  
-  // 데이터 입력
-  var data = [];
-  for (var i = 0; i < items.length; i++) {
-    var item = items[i];
-    var categories = (item.category1 + '>' + item.category2 + '>' + item.category3 + '>' + item.category4).split('>');
-    
-    data.push([
-      i + 1,
-      item.title.replace(/<[^>]*>/g, ''), // HTML 태그 제거
-      '=IMAGE("' + item.image + '")',
-      item.link,
-      item.lprice,
-      item.mallName,
-      item.maker,
-      item.brand,
-      categories[0] || '',
-      categories[1] || '',
-      categories[2] || '',
-      categories[3] || '',
-      item.productId,
-      item.productType
-    ]);
+// 검색 트렌드 시트 생성 및 데이터 채우기
+function buildTrendSheet(keyword) {
+  var credentials = getApiCredentials_();
+  var ss = SpreadsheetApp.getActive();
+
+  // 기존 시트가 있으면 제거 후 새로 생성
+  var existing = ss.getSheetByName('검색 트렌드');
+  if (existing) {
+    ss.deleteSheet(existing);
   }
-  
-  // 데이터 범위에 값 입력
-  var dataRange = sheet.getRange(2, 1, data.length, headers.length);
-  dataRange.setValues(data);
-  
-  // 모든 셀 서식 설정
-  var allRange = sheet.getRange(1, 1, data.length + 1, headers.length);
-  allRange.setHorizontalAlignment('center')
-          .setVerticalAlignment('middle');
-  
-  // 행 높이 설정
-  for (var i = 2; i <= data.length + 1; i++) {
-    sheet.setRowHeight(i, 150);
+  var sheet = ss.insertSheet('검색 트렌드');
+
+  var headers = ['키워드', '전체', '여성', '남성', '10대', '20대', '30대', '40대', '50대', '60대 이상'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers])
+    .setFontWeight('bold')
+    .setBackground('#03c75a')
+    .setFontColor('#ffffff')
+    .setHorizontalAlignment('center');
+
+  var summary = getTrendSummary_(keyword, credentials);
+  sheet.getRange(2, 1, 1, headers.length).setValues([
+    [
+      keyword,
+      summary.total,
+      summary.female,
+      summary.male,
+      summary.age10,
+      summary.age20,
+      summary.age30,
+      summary.age40,
+      summary.age50,
+      summary.age60
+    ]
+  ]);
+
+  sheet.getRange(2, 2, 1, headers.length - 1)
+    .setNumberFormat('0.00');
+
+  sheet.autoResizeColumns(1, headers.length);
+  sheet.setFrozenRows(1);
+}
+
+// 인증 정보 가져오기
+function getApiCredentials_() {
+  var props = PropertiesService.getScriptProperties();
+  var clientId = props.getProperty('CLIENT_ID');
+  var clientSecret = props.getProperty('CLIENT_SECRET');
+
+  if (!clientId || !clientSecret) {
+    throw new Error('API 인증 정보가 설정되어 있지 않습니다. 먼저 "API 설정" 메뉴에서 정보를 저장해주세요.');
   }
-  
-  // 이미지 열(C열) 너비 고정
-  sheet.setColumnWidth(3, 150);
-  
-  // 나머지 열은 데이터에 맞게 자동 조정
-  for (var i = 1; i <= headers.length; i++) {
-    if (i !== 3) { // 이미지 열 제외
-      sheet.autoResizeColumn(i);
-    }
+
+  return {
+    clientId: clientId,
+    clientSecret: clientSecret
+  };
+}
+
+// 키워드에 대한 전체/성별/연령대 요약 데이터 조회
+function getTrendSummary_(keyword, credentials) {
+  var totals = {
+    total: fetchTrendAverage_(keyword, credentials, {}),
+    female: fetchTrendAverage_(keyword, credentials, { gender: 'f' }),
+    male: fetchTrendAverage_(keyword, credentials, { gender: 'm' }),
+    age10: fetchTrendAverage_(keyword, credentials, { ages: ['10'] }),
+    age20: fetchTrendAverage_(keyword, credentials, { ages: ['20'] }),
+    age30: fetchTrendAverage_(keyword, credentials, { ages: ['30'] }),
+    age40: fetchTrendAverage_(keyword, credentials, { ages: ['40'] }),
+    age50: fetchTrendAverage_(keyword, credentials, { ages: ['50'] }),
+    age60: fetchTrendAverage_(keyword, credentials, { ages: ['60'] })
+  };
+
+  return totals;
+}
+
+// 네이버 데이터랩 검색 트렌드 API 호출 후 평균 ratio 반환
+function fetchTrendAverage_(keyword, credentials, options) {
+  var now = new Date();
+  var timeZone = Session.getScriptTimeZone();
+  var payload = {
+    startDate: '2016-01-01',
+    endDate: Utilities.formatDate(now, timeZone, 'yyyy-MM-dd'),
+    timeUnit: 'month',
+    keywordGroups: [
+      {
+        groupName: keyword,
+        keywords: [keyword]
+      }
+    ]
+  };
+
+  if (options.gender) {
+    payload.gender = options.gender;
   }
-  
-  // 링크 열(D열)에 하이퍼링크 설정
-  for (var i = 0; i < data.length; i++) {
-    var linkCell = sheet.getRange(i + 2, 4);
-    var linkUrl = data[i][3];
-    linkCell.setFormula('=HYPERLINK("' + linkUrl + '", "상품보기")');
-    linkCell.setFontColor('#1155cc').setFontLine('underline');
+
+  if (options.ages) {
+    payload.ages = options.ages;
   }
+
+  var response = UrlFetchApp.fetch('https://openapi.naver.com/v1/datalab/search', {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
+    headers: {
+      'X-Naver-Client-Id': credentials.clientId,
+      'X-Naver-Client-Secret': credentials.clientSecret
+    },
+    muteHttpExceptions: true
+  });
+
+  var status = response.getResponseCode();
+  if (status !== 200) {
+    var errorBody = response.getContentText();
+    throw new Error('네이버 데이터랩 API 호출 실패 (HTTP ' + status + ')\n' + errorBody);
+  }
+
+  var result = JSON.parse(response.getContentText());
+  if (!result.results || !result.results.length || !result.results[0].data) {
+    throw new Error('API 응답이 올바르지 않습니다. 응답: ' + response.getContentText());
+  }
+
+  var data = result.results[0].data;
+  if (!data.length) {
+    return 0;
+  }
+
+  var totalRatio = data.reduce(function(sum, item) {
+    return sum + (item.ratio || 0);
+  }, 0);
+
+  var average = totalRatio / data.length;
+  return Math.round(average * 100) / 100;
 }
